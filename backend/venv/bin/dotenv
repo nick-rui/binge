@@ -1,4 +1,4 @@
-#!/Users/nickrui/Desktop/binge/backend/venv/bin/python3.12
+#!/Users/kesavanramakrishnan/binge/backend/venv/bin/python3.11
 # -*- coding: utf-8 -*-
 import re
 import sys

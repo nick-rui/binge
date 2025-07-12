@@ -1,19 +1,97 @@
-import { useState } from 'react';
-import type { Restaurant, Direction } from './types';
-import { MOCK_RESTAURANTS } from './types';
+import { useState, useEffect } from 'react';
+import type { Restaurant, Direction, RestaurantDetails } from './types';
 import SwipeView from './components/SwipeView';
+import RestaurantDetailModal from './components/RestaurantDetailModal';
+
+const API_BASE_URL = 'http://localhost:5050/api';
 
 function App() {
-  const [restaurants, setRestaurants] = useState<Restaurant[]>(MOCK_RESTAURANTS);
+  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [likedRestaurants, setLikedRestaurants] = useState<Restaurant[]>([]);
   const [currentView, setCurrentView] = useState<'swipe' | 'likes'>('swipe');
+  const [location, setLocation] = useState<{ lat: number; lon: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [selectedRestaurant, setSelectedRestaurant] = useState<RestaurantDetails | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
 
-  const handleSwipe = (direction: Direction, restaurant: Restaurant) => {
-    if (direction === 'right') {
-      setLikedRestaurants(prev => [...prev, restaurant]);
+  // Get user's location
+  useEffect(() => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocation({
+          lat: position.coords.latitude,
+          lon: position.coords.longitude,
+        });
+        setError(null);
+      },
+      (error) => {
+        setError(error.message);
+        setLoading(false);
+      }
+    );
+  }, []);
+
+  // Fetch restaurants when location is available
+  useEffect(() => {
+    if (location) {
+      fetch(`${API_BASE_URL}/restaurants?lat=${location.lat}&lon=${location.lon}`)
+        .then(res => res.json())
+        .then(data => {
+          setRestaurants(data);
+          setLoading(false);
+        })
+        .catch(() => {
+          setError('Failed to fetch restaurants.');
+          setLoading(false);
+        });
     }
-    setRestaurants(prev => prev.filter(r => r.id !== restaurant.id));
+  }, [location]);
+
+  const handleSwipe = async (direction: Direction, restaurant: Restaurant) => {
+    if (direction === 'right') {
+      try {
+        await fetch(`${API_BASE_URL}/like`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ place_id: restaurant.place_id }),
+        });
+        setLikedRestaurants(prev => [...prev, restaurant]);
+      } catch (e) {
+        console.error("Failed to like restaurant", e);
+      }
+    }
+    // Remove the swiped restaurant from the list
+    setRestaurants(prev => prev.filter(r => r.place_id !== restaurant.place_id));
   };
+
+  const handleShowDetails = async (placeId: string) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/restaurant/${placeId}`);
+      const data: RestaurantDetails = await res.json();
+      setSelectedRestaurant(data);
+      setIsModalOpen(true);
+    } catch (e) {
+      console.error("Failed to fetch restaurant details", e);
+    }
+  };
+
+  const fetchLikedRestaurants = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/liked-restaurants`);
+      const data = await res.json();
+      setLikedRestaurants(data);
+    } catch (e) {
+      console.error("Failed to fetch liked restaurants", e);
+    }
+  };
+
+  // Fetch liked restaurants when switching to the 'likes' view
+  useEffect(() => {
+    if (currentView === 'likes') {
+      fetchLikedRestaurants();
+    }
+  }, [currentView]);
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -66,41 +144,39 @@ function App() {
       {/* Main content */}
       <main className="pt-16 pb-6 px-4">
         {currentView === 'swipe' ? (
-          <SwipeView
-            restaurants={restaurants}
-            onSwipe={handleSwipe}
-          />
+          loading ? (
+            <div className="text-center p-8">Loading restaurants...</div>
+          ) : error ? (
+            <div className="text-center p-8 text-red-500">{error}</div>
+          ) : (
+            <SwipeView
+              restaurants={restaurants}
+              onSwipe={handleSwipe}
+              onShowDetails={handleShowDetails}
+            />
+          )
         ) : (
           <div className="max-w-7xl mx-auto">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
               {likedRestaurants.map((restaurant) => (
                 <div
-                  key={restaurant.id}
+                  key={restaurant.place_id}
                   className="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition-shadow duration-300"
                 >
                   <div className="relative h-48">
                     <img
                       src={restaurant.image_url}
-                      alt={restaurant.dish}
+                      alt={restaurant.name}
                       className="w-full h-full object-cover"
                     />
-                    <div className="absolute top-2 right-2 bg-white/90 px-2 py-1 rounded-full text-sm font-semibold text-indigo-600">
-                      {restaurant.price}
-                    </div>
                   </div>
                   <div className="p-4">
                     <div className="flex items-center justify-between mb-2">
                       <h3 className="text-lg font-semibold text-gray-800">
                         {restaurant.name}
                       </h3>
-                      <span className="text-sm font-medium bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full">
-                        {restaurant.cuisine}
-                      </span>
                     </div>
-                    <p className="text-gray-600 font-medium">{restaurant.dish}</p>
-                    <p className="text-sm text-gray-500 mt-1 line-clamp-2">
-                      {restaurant.description}
-                    </p>
+                    <p className="text-gray-600 font-medium">{restaurant.address}</p>
                     <div className="flex items-center mt-3">
                       <div className="flex">
                         {[...Array(5)].map((_, i) => (
@@ -148,6 +224,12 @@ function App() {
           </div>
         )}
       </main>
+      {isModalOpen && selectedRestaurant && (
+        <RestaurantDetailModal
+          restaurant={selectedRestaurant}
+          onClose={() => setIsModalOpen(false)}
+        />
+      )}
     </div>
   );
 }

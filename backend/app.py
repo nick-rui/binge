@@ -1,110 +1,154 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-import random
+import requests
+import os
 
 app = Flask(__name__)
-CORS(app)
+CORS(app) # Allow all origins by default
 
-# Mock database of restaurants
-restaurants = [
-    {
-        "id": 1,
-        "name": "Sushi Paradise",
-        "dish": "Dragon Roll Deluxe",
-        "price": "$24.99",
-        "image_url": "https://placehold.co/600x800/67B7D1/ffffff?text=Dragon+Roll"
-    },
-    {
-        "id": 2,
-        "name": "Burger Haven",
-        "dish": "Truffle Mushroom Burger",
-        "price": "$18.99",
-        "image_url": "https://placehold.co/600x800/D1A667/ffffff?text=Truffle+Burger"
-    },
-    {
-        "id": 3,
-        "name": "Pizza Roma",
-        "dish": "Margherita Pizza",
-        "price": "$16.99",
-        "image_url": "https://placehold.co/600x800/D16767/ffffff?text=Margherita"
-    },
-    {
-        "id": 4,
-        "name": "Thai Spice",
-        "dish": "Pad Thai",
-        "price": "$15.99",
-        "image_url": "https://placehold.co/600x800/67D196/ffffff?text=Pad+Thai"
-    },
-    {
-        "id": 5,
-        "name": "Mediterranean Delight",
-        "dish": "Lamb Shawarma Plate",
-        "price": "$21.99",
-        "image_url": "https://placehold.co/600x800/9667D1/ffffff?text=Shawarma"
-    },
-    {
-        "id": 6,
-        "name": "Taco Fiesta",
-        "dish": "Street Tacos Trio",
-        "price": "$12.99",
-        "image_url": "https://placehold.co/600x800/D167C4/ffffff?text=Tacos"
-    },
-    {
-        "id": 7,
-        "name": "Pho House",
-        "dish": "Special Beef Pho",
-        "price": "$14.99",
-        "image_url": "https://placehold.co/600x800/67D1C4/ffffff?text=Pho"
-    },
-    {
-        "id": 8,
-        "name": "Indian Curry House",
-        "dish": "Butter Chicken",
-        "price": "$19.99",
-        "image_url": "https://placehold.co/600x800/D19667/ffffff?text=Curry"
-    },
-    {
-        "id": 9,
-        "name": "Ramen Lab",
-        "dish": "Tonkotsu Ramen",
-        "price": "$17.99",
-        "image_url": "https://placehold.co/600x800/6796D1/ffffff?text=Ramen"
-    },
-    {
-        "id": 10,
-        "name": "BBQ Joint",
-        "dish": "Smoked Brisket Plate",
-        "price": "$26.99",
-        "image_url": "https://placehold.co/600x800/D16767/ffffff?text=BBQ"
-    }
-]
+# TODO: It is recommended to move the API key to an environment variable for production.
+API_KEY = 'AIzaSyAnHQKt7EuXPbGQSuRKO6lfimnbkGlSbic'
 
-# In-memory storage for liked restaurants
+# Google Places API (New) endpoints
+NEARBY_SEARCH_URL = 'https://places.googleapis.com/v1/places:searchNearby'
+PLACE_DETAILS_URL = 'https://places.googleapis.com/v1/places/'
+
+# In-memory storage for liked restaurant place_ids
 liked_restaurants = set()
 
 @app.route('/api/restaurants', methods=['GET'])
 def get_restaurants():
-    # Return a shuffled copy of the restaurants list
-    shuffled_restaurants = restaurants.copy()
-    random.shuffle(shuffled_restaurants)
-    return jsonify(shuffled_restaurants)
+    lat = request.args.get('lat')
+    lon = request.args.get('lon')
+
+    if not lat or not lon:
+        return jsonify({"error": "Latitude and longitude are required"}), 400
+
+    try:
+        lat = float(lat)
+        lon = float(lon)
+    except ValueError:
+        return jsonify({"error": "Invalid latitude or longitude"}), 400
+
+    # Build request for new Places API
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": API_KEY,
+        "X-Goog-FieldMask": "places.id,places.displayName,places.rating,places.formattedAddress,places.photos"
+    }
+
+    body = {
+        "includedTypes": ["restaurant"],
+        "maxResultCount": 20,
+        "locationRestriction": {
+            "circle": {
+                "center": {
+                    "latitude": lat,
+                    "longitude": lon
+                },
+                "radius": 5000.0
+            }
+        }
+    }
+
+    try:
+        resp = requests.post(NEARBY_SEARCH_URL, json=body, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        return jsonify({"error": f"Failed to fetch from Google Places API: {e}"}), 500
+
+    restaurants = []
+    for place in data.get('places', []):
+        rating = place.get('rating', 0)
+        photos = place.get('photos', [])
+        if rating >= 4.0 and photos:
+            photo_name = photos[0]['name']  # e.g., 'places/XYZ/photos/abc'
+            photo_url = f"https://places.googleapis.com/v1/{photo_name}/media?key={API_KEY}&maxHeightPx=800&maxWidthPx=800"
+            restaurants.append({
+                "place_id": place.get('id'),
+                "name": place.get('displayName', {}).get('text', 'Unknown'),
+                "rating": rating,
+                "image_url": photo_url,
+                "address": place.get('formattedAddress', 'No address available')
+            })
+
+    return jsonify(restaurants)
+
+@app.route('/api/restaurant/<place_id>', methods=['GET'])
+def get_restaurant_details(place_id):
+    if not place_id:
+        return jsonify({"error": "Place ID is required"}), 400
+    
+    try:
+        headers = {
+            "X-Goog-Api-Key": API_KEY,
+            "X-Goog-FieldMask": "displayName,rating,formattedAddress,internationalPhoneNumber,websiteUri,editorialSummary,photos"
+        }
+        url = f"{PLACE_DETAILS_URL}{place_id}"
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        result = resp.json()
+
+        description = result.get('editorialSummary', {}).get('text', '')
+
+        response = {
+            "name": result.get('displayName', {}).get('text', 'Unknown'),
+            "rating": result.get('rating'),
+            "phone": result.get('internationalPhoneNumber'),
+            "website": result.get('websiteUri'),
+            "description": description.strip()
+        }
+        return jsonify(response)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route('/api/like', methods=['POST'])
 def like_restaurant():
     data = request.get_json()
-    restaurant_id = data.get('restaurant_id')
+    place_id = data.get('place_id')
     
-    if restaurant_id is None:
-        return jsonify({"error": "restaurant_id is required"}), 400
+    if place_id is None:
+        return jsonify({"error": "place_id is required"}), 400
     
-    liked_restaurants.add(restaurant_id)
-    return jsonify({"status": "success", "message": f"Restaurant {restaurant_id} liked"})
+    liked_restaurants.add(place_id)
+    return jsonify({"status": "success", "message": f"Restaurant {place_id} liked"})
 
 @app.route('/api/liked-restaurants', methods=['GET'])
 def get_liked_restaurants():
-    # Return full restaurant objects for all liked restaurant IDs
-    liked_list = [r for r in restaurants if r['id'] in liked_restaurants]
+    liked_list = []
+    for place_id in liked_restaurants:
+        try:
+            headers = {
+                "X-Goog-Api-Key": API_KEY,
+                "X-Goog-FieldMask": "displayName,rating,formattedAddress,photos"
+            }
+            url = f"{PLACE_DETAILS_URL}{place_id}"
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            place = resp.json()
+
+            photos = place.get('photos', [])
+            photo_url = ''
+            if photos:
+                photo_name = photos[0]['name']
+                photo_url = f"https://places.googleapis.com/v1/{photo_name}/media?key={API_KEY}&maxHeightPx=800&maxWidthPx=800"
+
+            liked_list.append({
+                "place_id": place_id,
+                "name": place.get('displayName', {}).get('text', 'Unknown'),
+                "rating": place.get('rating', 'N/A'),
+                "image_url": photo_url,
+                "address": place.get('formattedAddress', 'No address available')
+            })
+        except Exception as e:
+            # In case a place becomes invalid, skip it
+            print(f"Could not fetch details for {place_id}: {e}")
+            continue
+
     return jsonify(liked_list)
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000) 
+    app.run(debug=True, port=5050) 
