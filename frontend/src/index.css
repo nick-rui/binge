@@ -4,4 +4,55 @@
 
 .swipe {
   position: absolute;
-} 
+}
+
+.card {
+  position: relative;
+  width: 320px;
+  height: 480px;
+  border-radius: 24px;
+  background-size: cover;
+  background-position: center;
+  touch-action: none;
+}
+
+@keyframes fadeInOut {
+  0% { opacity: 0; transform: scale(0.8) rotate(var(--rotation)); }
+  15% { opacity: 1; transform: scale(1) rotate(var(--rotation)); }
+  85% { opacity: 1; transform: scale(1) rotate(var(--rotation)); }
+  100% { opacity: 0; transform: scale(0.8) rotate(var(--rotation)); }
+}
+
+.swipe-indicator {
+  animation: fadeInOut 1.5s ease-in-out forwards;
+}
+
+.swipe-indicator.nope {
+  --rotation: -12deg;
+}
+
+.swipe-indicator.like {
+  --rotation: 12deg;
+}
+
+.card-enter {
+  opacity: 0;
+  transform: scale(0.9);
+}
+
+.card-enter-active {
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 300ms, transform 300ms;
+}
+
+.card-exit {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.card-exit-active {
+  opacity: 0;
+  transform: scale(0.9);
+  transition: opacity 300ms, transform 300ms;
+}

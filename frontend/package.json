@@ -1,7 +1,7 @@
 {
-  "name": "binge-frontend",
+  "name": "frontend",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -31,4 +31,4 @@
     "typescript": "^5.2.2",
     "vite": "^5.1.4"
   }
-} 
+}
