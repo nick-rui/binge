@@ -12,17 +12,121 @@ API_KEY = 'AIzaSyAnHQKt7EuXPbGQSuRKO6lfimnbkGlSbic'
 # Google Places API (New) endpoints
 NEARBY_SEARCH_URL = 'https://places.googleapis.com/v1/places:searchNearby'
 PLACE_DETAILS_URL = 'https://places.googleapis.com/v1/places/'
+GEOCODING_URL = 'https://maps.googleapis.com/maps/api/geocode/json'
 
 # In-memory storage for liked restaurant place_ids
 liked_restaurants = set()
 
+@app.route('/api/geocode', methods=['GET'])
+def geocode_location():
+    """Convert a location name/address to coordinates"""
+    address = request.args.get('address')
+    
+    if not address:
+        return jsonify({"error": "Address parameter is required"}), 400
+    
+    try:
+        params = {
+            'address': address,
+            'key': API_KEY
+        }
+        
+        resp = requests.get(GEOCODING_URL, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        if data['status'] != 'OK' or not data.get('results'):
+            return jsonify({"error": "Location not found"}), 404
+        
+        result = data['results'][0]
+        location = result['geometry']['location']
+        
+        return jsonify({
+            "lat": location['lat'],
+            "lon": location['lng'],
+            "formatted_address": result['formatted_address'],
+            "place_id": result.get('place_id'),
+            "types": result.get('types', [])
+        })
+        
+    except Exception as e:
+        return jsonify({"error": f"Geocoding failed: {e}"}), 500
+
+@app.route('/api/search-locations', methods=['GET'])
+def search_locations():
+    """Search for location suggestions based on query"""
+    query = request.args.get('query')
+    
+    if not query:
+        return jsonify({"error": "Query parameter is required"}), 400
+    
+    try:
+        # Use Places API Text Search for location suggestions
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": API_KEY,
+            "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.types"
+        }
+        
+        body = {
+            "textQuery": query,
+            "includedTypes": ["locality", "administrative_area_level_1", "country"],
+            "maxResultCount": 5
+        }
+        
+        # Use the text search endpoint for location suggestions
+        resp = requests.post('https://places.googleapis.com/v1/places:searchText', 
+                           json=body, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        suggestions = []
+        for place in data.get('places', []):
+            suggestions.append({
+                "place_id": place.get('id'),
+                "name": place.get('displayName', {}).get('text', 'Unknown'),
+                "formatted_address": place.get('formattedAddress', ''),
+                "types": place.get('types', [])
+            })
+        
+        return jsonify(suggestions)
+        
+    except Exception as e:
+        return jsonify({"error": f"Location search failed: {e}"}), 500
+
 @app.route('/api/restaurants', methods=['GET'])
 def get_restaurants():
+    """Get restaurants by coordinates (supports both lat/lon and location name)"""
     lat = request.args.get('lat')
     lon = request.args.get('lon')
+    location_name = request.args.get('location')
 
+    # If location name is provided, geocode it first
+    if location_name and not (lat and lon):
+        try:
+            params = {
+                'address': location_name,
+                'key': API_KEY
+            }
+            
+            resp = requests.get(GEOCODING_URL, params=params, timeout=10)
+            resp.raise_for_status()
+            geocode_data = resp.json()
+            
+            if geocode_data['status'] != 'OK' or not geocode_data.get('results'):
+                return jsonify({"error": "Could not find the specified location"}), 404
+            
+            result = geocode_data['results'][0]
+            location_coords = result['geometry']['location']
+            lat = location_coords['lat']
+            lon = location_coords['lng']
+            
+        except Exception as e:
+            return jsonify({"error": f"Failed to geocode location: {e}"}), 500
+
+    # Validate coordinates
     if not lat or not lon:
-        return jsonify({"error": "Latitude and longitude are required"}), 400
+        return jsonify({"error": "Latitude and longitude are required (or provide location name)"}), 400
 
     try:
         lat = float(lat)
@@ -149,6 +253,11 @@ def get_liked_restaurants():
             continue
 
     return jsonify(liked_list)
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for testing"""
+    return jsonify({"status": "healthy", "message": "Backend is running"})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5050) 
